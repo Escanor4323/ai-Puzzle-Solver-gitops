@@ -12,7 +12,7 @@ Modern cloud-native deployments separate two distinct concerns:
 
 | Concern | Repository |
 |---|---|
-| **Application source code** | `ai-Puzzle-Solver-backend` |
+| **Application source code** | [`ai-Puzzle-Solver-backend`](https://github.com/Escanor4323/ai-Puzzle-Solver-backend) |
 | **Infrastructure declarations** | **This repo** (`ai-Puzzle-Solver-gitops`) |
 
 This separation — known as **GitOps** — means the cluster state is always
@@ -23,36 +23,46 @@ is reviewed, versioned, audited, and reproducible.
 - **Auditability** — every deployment change has a commit, an author, and a timestamp
 - **Rollback in seconds** — revert a bad deploy with `git revert`
 - **Drift detection** — ArgoCD continuously reconciles; any manual cluster change is auto-corrected
-- **Zero-touch deployments** — merge to `main` → cluster updates itself
+- **Zero-touch deployments** — merge to `main` in the backend → image builds → cluster updates itself
 
 ---
 
-## Architecture Overview
+## Full System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Developer Workflow                        │
-│                                                                  │
-│  1. Push code to ai-Puzzle-Solver-backend                       │
-│  2. CI builds & pushes new image to Docker Hub                  │
-│  3. Update image tag in this repo (overlays/prod)               │
-│  4. ArgoCD detects the change and syncs the cluster             │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                        Developer Workflow                             │
+│                                                                       │
+│  1. Push / merge to main in ai-Puzzle-Solver-backend                 │
+│  2. GitHub Actions builds linux/amd64 + linux/arm64 image            │
+│  3. Image pushed to Docker Hub  harudavv/mazeai-showcases:<sha>      │
+│  4. CI job clones this repo, updates base/deployment.yaml image tag  │
+│  5. CI commits "chore: bump backend image tag to <sha>"              │
+│  6. ArgoCD detects the new commit and syncs the cluster              │
+└──────────────────────────────────────────────────────────────────────┘
 
-         GitHub                    OpenShift Cluster
-   ┌──────────────┐           ┌─────────────────────────┐
-   │  This Repo   │◄──watch───│        ArgoCD            │
-   │  (GitOps)    │           │  (openshift-gitops ns)   │
-   └──────────────┘           └────────────┬────────────┘
-                                           │ applies
-                               ┌───────────▼────────────┐
-                               │  ai-puzzle-solver-prod  │
-                               │  ┌───────────────────┐  │
-                               │  │  Deployment (x2)  │  │
-                               │  │  Service          │  │
-                               │  │  Route (TLS)      │  │
-                               │  └───────────────────┘  │
-                               └────────────────────────┘
+  ai-Puzzle-Solver-backend          ai-Puzzle-Solver-gitops
+  ┌───────────────────────┐         ┌──────────────────────┐
+  │  FastAPI + DeepFace   │─CI────► │  Kustomize manifests │
+  │  .github/workflows/   │  push   │  overlays/prod/      │
+  │    ci.yaml            │  tag    │  argocd/             │
+  └───────────────────────┘         └──────────┬───────────┘
+                                               │ watched by
+                                    ┌──────────▼───────────┐
+         Docker Hub                 │       ArgoCD          │
+  ┌───────────────────────┐         │  (openshift-gitops)  │
+  │ harudavv/mazeai-      │◄────────│  auto-sync + heal    │
+  │ showcases:<sha>       │  pull   └──────────┬───────────┘
+  └───────────────────────┘                    │ applies
+                                    ┌──────────▼───────────┐
+                                    │  ai-puzzle-solver-   │
+                                    │  prod (namespace)    │
+                                    │  ┌────────────────┐  │
+                                    │  │ Deployment x2  │  │
+                                    │  │ Service        │  │
+                                    │  │ Route (TLS)    │  │
+                                    │  └────────────────┘  │
+                                    └──────────────────────┘
 ```
 
 ---
@@ -62,68 +72,82 @@ is reviewed, versioned, audited, and reproducible.
 ```
 ai-Puzzle-Solver-gitops/
 ├── argocd/
-│   └── application.yaml          # ArgoCD Application CRD
-├── base/                         # Shared base manifests (env-agnostic)
-│   ├── deployment.yaml
+│   └── application.yaml              # ArgoCD Application CRD
+├── base/                             # Shared base manifests (env-agnostic)
+│   ├── deployment.yaml               # CI auto-updates image tag here
 │   ├── service.yaml
-│   ├── route.yaml
-│   ├── secret.yaml               # Template only — never commit real secrets
+│   ├── route.yaml                    # OpenShift Route (TLS edge)
+│   ├── secret.yaml                   # Template only — never commit real secrets
 │   └── kustomization.yaml
 └── overlays/
-    └── prod/                     # Production-specific overrides
-        ├── deployment-patch.yaml # Replicas: 2, higher resource limits
-        └── kustomization.yaml    # Namespace: ai-puzzle-solver-prod
+    └── prod/                         # Production-specific overrides
+        ├── kustomization.yaml        # Namespace + images[] tag override
+        └── deployment-patch.yaml     # Replicas: 2, higher resource limits
 ```
 
-### Key Design Decisions
+---
 
-**Kustomize over Helm** — The application has a single deployment target with
-straightforward configuration. Kustomize patches are simpler to audit and
-require no templating language.
+## CI/CD Pipeline (Prompt 3)
 
-**OpenShift Route over Ingress** — Red Hat OpenShift uses its own `Route`
-resource for HTTP/HTTPS traffic routing with native TLS edge termination.
-Standard Kubernetes `Ingress` objects are not used.
+The pipeline lives in `ai-Puzzle-Solver-backend/.github/workflows/ci.yaml`.
 
-**Non-root container (UID 1001)** — OpenShift's default restricted Security
-Context Constraints (SCC) reject containers that run as root. The backend
-image is built with `USER 1001` and all writable paths redirected to `/tmp`
-to comply with arbitrary UID assignment.
+### Trigger
+Runs on every push to `main`. Pull requests run only the build step (no push, no GitOps update).
 
-**emptyDir volumes for model cache** — The `BAAI/bge-m3` (~1.2 GB) and
-DeepFace models are downloaded at first startup into ephemeral volumes.
-This keeps the container image lean while ensuring OpenShift's read-only
-root filesystem policy is respected.
+### Jobs
+
+```
+push to main
+     │
+     ▼
+┌─────────────────────┐
+│  build-and-push     │  Builds linux/amd64 + linux/arm64 image
+│                     │  Tags: ai-puzzle-solver-backend-<7-char-sha>
+│                     │  Pushes to Docker Hub
+└──────────┬──────────┘
+           │ on success
+           ▼
+┌─────────────────────┐
+│  update-gitops      │  Clones this repo using GITOPS_PAT
+│                     │  Updates image tag via yq
+│                     │  Commits "chore: bump backend image tag to <sha>"
+│                     │  Pushes back to this repo → ArgoCD syncs
+└─────────────────────┘
+```
+
+### Required GitHub Secrets (set in `ai-Puzzle-Solver-backend` repo settings)
+
+| Secret | Where to get it |
+|---|---|
+| `DOCKERHUB_USERNAME` | Your Docker Hub username (`harudavv`) |
+| `DOCKERHUB_TOKEN` | Docker Hub → Account Settings → Security → Access Tokens |
+| `GITOPS_PAT` | GitHub → Settings → Developer Settings → Personal Access Tokens (Fine-grained) — needs `Contents: Read & Write` on this repo only |
 
 ---
 
 ## What Was Done
 
-### Phase 1 — Backend Containerization (`ai-Puzzle-Solver-backend`)
+### Phase 1 — Backend Containerization
 
-- Vendored **DeepFace v0.0.99** face recognition library directly into the
-  backend source tree, eliminating a runtime PyPI dependency on an unstable
-  package
-- Wrote an OpenShift-compliant multi-stage `Dockerfile` targeting `python:3.11-slim`
-- Layered pip installs (PyTorch → sentence-transformers → TensorFlow → CV →
-  DeepFace → app deps) so Docker cache reuse is maximized on rebuilds
+- Vendored **DeepFace v0.0.99** face recognition library into `vendor/` — no runtime PyPI dependency
+- OpenShift-compliant `Dockerfile`: `USER 1001`, non-root, all writable paths redirect to `/tmp`
 - Added `pymilvus[milvus_lite]` for local SQLite-backed vector storage
-- Set `--start-period 300s` on the health check to accommodate first-run
-  model downloads from HuggingFace
-- Built and pushed a **multi-platform manifest** (`linux/amd64` + `linux/arm64`)
-  to Docker Hub:
-  ```
-  harudavv/mazeai-showcases:ai-puzzle-solver-backend
-  ```
+- Health check `--start-period 300s` to accommodate first-run model downloads (~1.2 GB BGE-M3)
+- Multi-platform manifest (`linux/amd64` + `linux/arm64`) on Docker Hub:
+  `harudavv/mazeai-showcases:ai-puzzle-solver-backend`
 
-### Phase 2 — GitOps Repository (This Repo)
+### Phase 2 — GitOps Repository
 
-- Initialized Kustomize base with `Deployment`, `Service`, `Route`, and
-  `Secret` manifests
-- Created `overlays/prod` with production-scale overrides (2 replicas,
-  higher CPU/memory limits)
-- Authored the **ArgoCD Application CRD** with automated sync and self-healing
-  pointed at this repository
+- Kustomize `base/` with `Deployment`, `Service`, `Route`, `Secret`
+- `overlays/prod` with 2-replica patch and `images[]` override block for CI tag injection
+- ArgoCD Application CRD with automated sync and self-healing
+
+### Phase 3 — CI/CD Bridge
+
+- GitHub Actions workflow in `ai-Puzzle-Solver-backend/.github/workflows/ci.yaml`
+- Job 1: builds and pushes multi-platform image tagged with Git SHA
+- Job 2: clones this repo, patches `base/deployment.yaml` with `yq`, commits and pushes
+- GitHub Actions layer cache (`cache-from/to: type=gha`) for fast rebuilds
 
 ---
 
@@ -131,8 +155,10 @@ root filesystem policy is respected.
 
 ### Immediate — Before First Deploy
 
-- [ ] **Fill in secrets** — Do NOT commit real API keys to this repo.
-  Apply the secret manually to the cluster:
+- [ ] **Add secrets to backend repo** (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`, `GITOPS_PAT`)
+  in GitHub → `ai-Puzzle-Solver-backend` → Settings → Secrets and variables → Actions
+
+- [ ] **Apply cluster secrets** — never commit real keys to this repo:
   ```bash
   oc create secret generic ai-puzzle-solver-secrets \
     --from-literal=ANTHROPIC_API_KEY=<your-key> \
@@ -140,78 +166,52 @@ root filesystem policy is respected.
     --from-literal=PUZZLEMIND_LLM_PROVIDER=claude \
     -n ai-puzzle-solver-prod
   ```
-  Then delete `base/secret.yaml` or replace it with an
-  [External Secrets Operator](https://external-secrets.io/) reference.
 
-- [ ] **Create the namespace on the cluster**
+- [ ] **Create the namespace**
   ```bash
   oc new-project ai-puzzle-solver-prod
   ```
 
-- [ ] **Install ArgoCD** (if not already present on the cluster)
-  ```bash
-  oc apply -k https://github.com/argoproj/argo-cd/manifests/cluster-install
-  ```
-  On OpenShift, the Red Hat GitOps Operator is preferred:
-  ```bash
-  # Via OperatorHub in the OpenShift web console
-  # Operator: "Red Hat OpenShift GitOps"
-  ```
+- [ ] **Install Red Hat OpenShift GitOps Operator** via OperatorHub in the OpenShift web console
 
 - [ ] **Apply the ArgoCD Application**
   ```bash
   oc apply -f argocd/application.yaml
   ```
-  ArgoCD will immediately sync `overlays/prod` to the cluster.
 
 ### Short-term Improvements
 
-- [ ] **Persistent model cache** — Replace `emptyDir` volumes with a
-  `PersistentVolumeClaim` so `BAAI/bge-m3` and DeepFace models survive
-  pod restarts and the 5-minute cold start is eliminated
-- [ ] **Image tag pinning** — Replace `ai-puzzle-solver-backend` (mutable tag)
-  with an immutable digest in `overlays/prod/deployment-patch.yaml`:
-  ```yaml
-  image: harudavv/mazeai-showcases@sha256:<digest>
-  ```
-- [ ] **CI/CD integration** — Add a GitHub Actions workflow to the backend
-  repo that builds, pushes, and automatically opens a PR against this repo
-  updating the image digest
-- [ ] **Horizontal Pod Autoscaler** — Add an `HPA` manifest targeting 70% CPU
-  utilization to scale replicas dynamically under load
+- [ ] **Persistent model cache** — replace `emptyDir` with a `PersistentVolumeClaim` to
+  eliminate the 5-minute cold start caused by BGE-M3 and DeepFace model downloads
+- [ ] **Image digest pinning** — CI currently writes a mutable SHA tag; migrate to
+  immutable digest (`@sha256:...`) for full reproducibility
+- [ ] **Frontend CI pipeline** — mirror this pipeline for `ai-Puzzle-Solver-frontend`
+- [ ] **PR previews** — add a staging ArgoCD Application pointing to `overlays/staging`
+  that deploys on feature branches
 
 ### Long-term
 
-- [ ] **Secrets management** — Integrate HashiCorp Vault or AWS Secrets Manager
-  via the External Secrets Operator
-- [ ] **Multi-environment overlays** — Add `overlays/staging` for pre-production
-  validation before changes reach `overlays/prod`
-- [ ] **Network Policy** — Restrict pod-to-pod traffic with `NetworkPolicy`
-  manifests once the full service mesh topology is defined
-- [ ] **Observability** — Add `ServiceMonitor` CRD for Prometheus scraping of
-  the `/metrics` endpoint
+- [ ] **External Secrets Operator** — replace `secret.yaml` template with an
+  `ExternalSecret` CRD pulling from HashiCorp Vault or AWS Secrets Manager
+- [ ] **Network Policy** — restrict pod-to-pod traffic once service mesh topology is final
+- [ ] **Horizontal Pod Autoscaler** — scale on CPU/memory automatically
+- [ ] **Observability** — add `ServiceMonitor` for Prometheus scraping of `/metrics`
 
 ---
 
 ## Quick Reference
 
-### Verify the Kustomize output locally (no cluster needed)
 ```bash
+# Dry-run the prod overlay locally (no cluster needed)
 kubectl kustomize overlays/prod
-```
 
-### Trigger a manual ArgoCD sync
-```bash
+# Manually trigger ArgoCD sync
 argocd app sync ai-puzzle-solver-backend
-```
 
-### Check application health
-```bash
+# Check application health and sync status
 argocd app get ai-puzzle-solver-backend
-```
 
-### Roll back to a previous revision
-```bash
+# Roll back to a previous deployment
 argocd app history ai-puzzle-solver-backend
 argocd app rollback ai-puzzle-solver-backend <revision-id>
 ```
@@ -223,10 +223,10 @@ argocd app rollback ai-puzzle-solver-backend <revision-id>
 | Property | Value |
 |---|---|
 | Registry | Docker Hub |
-| Image | `harudavv/mazeai-showcases:ai-puzzle-solver-backend` |
+| Image | `harudavv/mazeai-showcases:ai-puzzle-solver-backend-<sha>` |
 | Platforms | `linux/amd64`, `linux/arm64` |
 | Base | `python:3.11-slim` |
-| Run as | UID 1001 (non-root, OpenShift restricted SCC compliant) |
+| Run as | UID 1001 (OpenShift restricted SCC compliant) |
 | Exposed port | `8008` |
 
 ---
@@ -236,5 +236,5 @@ argocd app rollback ai-puzzle-solver-backend <revision-id>
 | Repository | Purpose |
 |---|---|
 | [`Escanor4323/ai-Puzzle-Solver-gitops`](https://github.com/Escanor4323/ai-Puzzle-Solver-gitops) | This repo — infrastructure declarations |
-| `ai-Puzzle-Solver-backend` | FastAPI backend, face recognition, LLM integration |
-| `ai-Puzzle-Solver-frontend` | Frontend application |
+| [`Escanor4323/ai-Puzzle-Solver-backend`](https://github.com/Escanor4323/ai-Puzzle-Solver-backend) | FastAPI backend, face recognition, LLM integration |
+| [`Escanor4323/ai-Puzzle-Solver-frontend`](https://github.com/Escanor4323/ai-Puzzle-Solver-frontend) | Frontend application |
