@@ -29,7 +29,7 @@ spec:
                 name: ai-puzzle-solver-secrets
           env:
             - name: DEEPFACE_HOME
-              value: /tmp/deepface_cache
+              value: /opt/deepface_cache
             - name: HF_HOME
               value: /tmp/hf_cache
             - name: TORCH_HOME
