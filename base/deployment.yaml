@@ -20,7 +20,7 @@ spec:
         fsGroup: 0
       containers:
         - name: backend
-          image: docker.io/harudavv/mazeai-showcases:ai-puzzle-solver-backend-6c1c3999263feda7494a6231c74960bf9658193f
+          image: docker.io/harudavv/mazeai-showcases:ai-puzzle-solver-backend-98a72fe7a5cab1e89b90aa6921206440de29b740
           ports:
             - containerPort: 8008
               protocol: TCP
