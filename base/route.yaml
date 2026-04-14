@@ -1,0 +1,15 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: ai-puzzle-solver-backend
+  labels:
+    app: ai-puzzle-solver-backend
+spec:
+  to:
+    kind: Service
+    name: ai-puzzle-solver-backend
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

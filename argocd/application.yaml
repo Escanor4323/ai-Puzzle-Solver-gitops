@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ai-puzzle-solver-backend
+  namespace: openshift-gitops
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/Escanor4323/ai-Puzzle-Solver-gitops.git
+    targetRevision: HEAD
+    path: overlays/prod
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ai-puzzle-solver-prod
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true

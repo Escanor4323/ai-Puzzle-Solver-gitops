@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-puzzle-solver-backend
+  labels:
+    app: ai-puzzle-solver-backend
+spec:
+  selector:
+    app: ai-puzzle-solver-backend
+  ports:
+    - name: http
+      port: 8008
+      targetPort: 8008
+      protocol: TCP
