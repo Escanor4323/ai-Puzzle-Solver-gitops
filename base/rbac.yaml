@@ -1,0 +1,39 @@
+# ── ArgoCD / OpenShift-GitOps namespace RBAC ─────────────────────────────────
+#
+# Grants the openshift-gitops application controller the built-in "admin"
+# ClusterRole inside ai-puzzle-solver-prod so it can create, update, and
+# patch all managed resources (Deployment, Service, Route, Secret, …).
+#
+# Why this file exists
+# ────────────────────
+# ArgoCD runs in the openshift-gitops namespace. By default it has no
+# permissions in any other namespace — each managed namespace must explicitly
+# grant access via a RoleBinding.  Without this, every sync attempt fails with:
+#   "cannot patch resource … is forbidden: User
+#    system:serviceaccount:openshift-gitops:openshift-gitops-argocd-application-controller"
+#
+# Bootstrap (one-time, requires cluster-admin)
+# ─────────────────────────────────────────────
+# ArgoCD cannot apply this file on its very first sync because it has no
+# permissions yet.  A cluster-admin must label the namespace once to let the
+# OpenShift GitOps operator create the initial RBAC automatically:
+#
+#   oc label namespace ai-puzzle-solver-prod \
+#       argocd.argoproj.io/managed-by=openshift-gitops
+#
+# After that one command, this RoleBinding is self-healing: ArgoCD will
+# re-apply it from git if it is ever accidentally deleted.
+# ─────────────────────────────────────────────────────────────────────────────
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: openshift-gitops-argocd-admin
+  namespace: ai-puzzle-solver-prod
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: admin
+subjects:
+  - kind: ServiceAccount
+    name: openshift-gitops-argocd-application-controller
+    namespace: openshift-gitops
