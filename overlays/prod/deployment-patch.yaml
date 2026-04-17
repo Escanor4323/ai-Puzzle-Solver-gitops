@@ -6,6 +6,10 @@ spec:
   replicas: 2
   template:
     spec:
+      tolerations:
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
       containers:
         - name: backend
           resources:
