@@ -18,7 +18,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: backend
-          image: docker.io/harudavv/mazeai-showcases:ai-puzzle-solver-backend-gpu-56dcfbd
+          image: docker.io/harudavv/mazeai-showcases:ai-puzzle-solver-backend-66a4e8538bb484b21f03555862ad3edc2b1366b2
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
