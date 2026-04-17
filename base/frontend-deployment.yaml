@@ -18,7 +18,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: frontend
-          image: docker.io/harudavv/mazeai-showcases:ai-puzzle-solver-frontend-latest
+          image: docker.io/harudavv/mazeai-showcases:ai-puzzle-solver-frontend-31549d6
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
