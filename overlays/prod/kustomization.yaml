@@ -11,6 +11,10 @@ patches:
     target:
       kind: Deployment
       name: ai-puzzle-solver-backend
+  - path: frontend-deployment-patch.yaml
+    target:
+      kind: Deployment
+      name: ai-puzzle-solver-frontend
 
 # CI updates this block automatically via the update-gitops job.
 # The image name here matches the container name in base/deployment.yaml.

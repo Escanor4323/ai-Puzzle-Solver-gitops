@@ -7,3 +7,6 @@ resources:
   - route.yaml
   - secret.yaml
   - rbac.yaml
+  - frontend-deployment.yaml
+  - frontend-service.yaml
+  - frontend-route.yaml

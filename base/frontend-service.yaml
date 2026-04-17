@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: ai-puzzle-solver-frontend
+  labels:
+    app: ai-puzzle-solver-frontend
+spec:
+  selector:
+    app: ai-puzzle-solver-frontend
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+      protocol: TCP
