@@ -16,11 +16,14 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
-        runAsUser: 1001
-        fsGroup: 0
       containers:
         - name: backend
           image: docker.io/harudavv/mazeai-showcases:ai-puzzle-solver-backend-56dcfbdb89b3c8182b702f07e178cdbbe78f551b
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8008
               protocol: TCP
