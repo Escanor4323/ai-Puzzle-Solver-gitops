@@ -67,8 +67,12 @@ spec:
               mountPath: /tmp/hf_cache
             - name: model-cache
               mountPath: /tmp/deepface_cache
+            - name: app-data
+              mountPath: /app/data
       volumes:
         - name: hf-cache
           emptyDir: {}
         - name: model-cache
+          emptyDir: {}
+        - name: app-data
           emptyDir: {}
